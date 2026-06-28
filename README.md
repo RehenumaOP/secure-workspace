@@ -16,9 +16,12 @@ A full-stack team collaboration platform engineered with enterprise-grade securi
 
 * **JWT Authentication** – Access & refresh token lifecycle management with secure `bcrypt` password hashing.
 * **Workspace Management** – Seamlessly create workspaces and invite members via an approval-based onboarding flow.
+* * **Account Security & Password Updates** – Users can securely update their passwords from their profile profile settings to keep credentials safe.
 * **Role-Based Access Control (RBAC)** – Fine-grained authorization tiers mapping across Admin, Member, and Viewer roles.
+* **Team Invitation System** – Invite team members to specific workspaces via secure email/username invitations with pending approval states.
 * **Kanban Task Management** – Dynamic task pipeline (Todo → In Progress → Done) featuring native drag-and-drop mechanics.
 * **Security Dashboard** – Real-time visualization of active login session history, historical activity audit logs, and calculated security health scores.
+* **Secure File Uploads** – Upload documents, assets, and project files directly within workspaces, handled via secure Cloudinary cloud storage integrations.
 * **Encrypted File Processing** – Secure local handling and offloading via Cloudinary integrations for document and imagery storage.
 * **Modern Interface** – Deep indigo responsive sidebar layout complete with micro-interactions, dark mode presets, and structured modals.
 
