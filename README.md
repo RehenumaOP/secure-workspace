@@ -33,7 +33,7 @@ A full-stack team collaboration platform engineered with enterprise-grade securi
 | **Database** | MongoDB Atlas (via Motor async driver) |
 | **Authentication** | JWT (`python-jose`), Passwords (`passlib` + `bcrypt`) |
 | **Storage Engine** | Cloudinary API |
-| **Deployment** | Vercel (Frontend Ecosystem), Render (Backend Engine) |
+| **Deployment** |  |
 
 ---
 
