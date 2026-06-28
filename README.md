@@ -16,7 +16,7 @@ A full-stack team collaboration platform engineered with enterprise-grade securi
 
 * **JWT Authentication** – Access & refresh token lifecycle management with secure `bcrypt` password hashing.
 * **Workspace Management** – Seamlessly create workspaces and invite members via an approval-based onboarding flow.
-* * **Account Security & Password Updates** – Users can securely update their passwords from their profile profile settings to keep credentials safe.
+* **Account Security & Password Updates** – Users can securely update their passwords from their profile profile settings to keep credentials safe.
 * **Role-Based Access Control (RBAC)** – Fine-grained authorization tiers mapping across Admin, Member, and Viewer roles.
 * **Team Invitation System** – Invite team members to specific workspaces via secure email/username invitations with pending approval states.
 * **Kanban Task Management** – Dynamic task pipeline (Todo → In Progress → Done) featuring native drag-and-drop mechanics.
