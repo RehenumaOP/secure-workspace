@@ -3,7 +3,7 @@
 A full-stack team collaboration platform engineered with enterprise-grade security features. Built using FastAPI, MongoDB, and React.
 
 ## 🌐 Live Demo
-> 🚀 Coming soon after deployment.
+> [Live Site](https://secure-workspace-app.netlify.app) — Frontend deployed on Netlify, backend on Render.
 
 ---
 
