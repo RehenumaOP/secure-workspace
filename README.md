@@ -7,11 +7,6 @@ A full-stack team collaboration platform engineered with enterprise-grade securi
 
 ---
 
-## 📸 Screenshots
-> Visual previews can be found directly inside the `/screenshots` directory.
-
----
-
 ## ✨ Features
 
 * **JWT Authentication** – Access & refresh token lifecycle management with secure `bcrypt` password hashing.
