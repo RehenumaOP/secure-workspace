@@ -3,11 +3,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.database.connection import connect_db, close_db
-from app.routers import auth          # ← ADD THIS LINE
-from app.routers import workspace
-from app.routers import task
-from app.routers import security 
-from app.routers import files
+from app.routers import auth, workspace, task, security, files          # ← ADD THIS LINE
+
+
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -23,14 +22,14 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:8000",
-]
+import os
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+
+
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[FRONTEND_URL],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

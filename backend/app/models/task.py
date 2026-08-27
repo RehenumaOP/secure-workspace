@@ -1,5 +1,5 @@
 # app/models/task.py
-from datetime import datetime
+from datetime import datetime, timezone
 from bson import ObjectId
 from app.database.connection import tasks_collection
 
@@ -15,13 +15,13 @@ def task_helper(task) -> dict:
         "assigned_to": str(task["assigned_to"]) if task.get("assigned_to") else None,
         "created_by": str(task["created_by"]),
         "deadline": task["deadline"].isoformat() if task.get("deadline") else None,
-        "created_at": task.get("created_at", datetime.utcnow()).isoformat(),
+        "created_at": task.get("created_at", datetime.now(timezone.utc)).isoformat(),
         "attachment_url": task.get("attachment_url")
     }
 
 
 async def create_task(data: dict) -> dict:
-    data["created_at"] = datetime.utcnow()
+    data["created_at"] = datetime.now(timezone.utc)
     data["status"] = "todo"
     result = await tasks_collection.insert_one(data)
     new_task = await tasks_collection.find_one({"_id": result.inserted_id})
@@ -42,7 +42,7 @@ async def get_task_by_id(task_id: str) -> dict:
 
 
 async def update_task(task_id: str, update_data: dict) -> dict:
-    update_data["updated_at"] = datetime.utcnow()
+    update_data["updated_at"] = datetime.now(timezone.utc)
     await tasks_collection.update_one(
         {"_id": ObjectId(task_id)},
         {"$set": update_data}

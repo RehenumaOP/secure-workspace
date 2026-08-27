@@ -1,11 +1,11 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
 from datetime import datetime
 
 class UserRegister(BaseModel):
-    name: str
+    name: str = Field(min_length=2, max_length=50)
     email: EmailStr
-    password: str
+    password: str = Field(min_length=8)  # enforce 8 char minimum
 
 class UserLogin(BaseModel):
     email: EmailStr

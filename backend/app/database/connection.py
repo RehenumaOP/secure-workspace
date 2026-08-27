@@ -20,6 +20,9 @@ async def connect_db():
     try:
         await client.admin.command('ping')
         print("Connected to MongoDB successfully!")
+        # Enforce email uniqueness at DB level - not just app level
+        await users_collection.create_index("email", unique=True)
+        print("Indexes created")
     except Exception as e:
         print(f"MongoDB connection failed: {e}")
 

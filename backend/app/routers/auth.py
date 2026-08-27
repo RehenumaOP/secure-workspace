@@ -1,103 +1,107 @@
 # app/routers/auth.py
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.schemas.user import UserRegister, UserLogin, TokenResponse, UserResponse
 from app.models.user import find_user_by_email, create_user, user_helper, find_user_by_id
 from app.auth.jwt_handler import create_access_token, create_refresh_token, verify_token
+from app.auth.dependencies import get_current_user
+from app.database.connection import users_collection, activity_logs_collection
 from passlib.context import CryptContext
-from app.database.connection import users_collection
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from datetime import datetime, timezone
 
-# APIRouter is like a mini FastAPI app for just auth routes
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
-
-# bcrypt password hasher setup
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-# Bearer token checker
 security = HTTPBearer()
 
 
 def hash_password(password: str) -> str:
-    """Turn plain password into bcrypt hash"""
     return pwd_context.hash(password)
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    """Check if plain password matches the stored hash"""
     return pwd_context.verify(plain, hashed)
 
 
-class ChangePasswordRequest(BaseModel):
-    current_password: str
-    new_password: str
-# ─── REGISTER ─────────────────────────────────────────────
+# ── REGISTER ──────────────────────────────────────────────
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register(user_data: UserRegister):
-    # 1. Check if email already exists
     existing = await find_user_by_email(user_data.email)
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered"
         )
-
-    # 2. Hash the password — never store plain text!
     hashed = hash_password(user_data.password)
-
-    # 3. Save user to MongoDB
     new_user = await create_user({
         "name": user_data.name,
         "email": user_data.email,
         "password": hashed,
     })
-
-    # 4. Return success message
     return {
         "message": "Account created successfully!",
         "user": user_helper(new_user)
     }
 
 
-# ─── LOGIN ────────────────────────────────────────────────
+# ── LOGIN ──────────────────────────────────────────────────
 @router.post("/login", response_model=TokenResponse)
-async def login(credentials: UserLogin):
-    # 1. Find user by email
+async def login(credentials: UserLogin, request: Request):
+    # Get real IP
+    ip = request.client.host
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        ip = forwarded.split(",")[0].strip()
+
     user = await find_user_by_email(credentials.email)
+
+    # Log failed — user not found
     if not user:
+        await activity_logs_collection.insert_one({
+            "user_id": None,
+            "email_attempted": credentials.email,
+            "action": "login",
+            "status": "failed",
+            "reason": "user_not_found",
+            "ip_address": ip,
+            "device": request.headers.get("User-Agent", "unknown")[:100],
+            "time": datetime.now(timezone.utc)
+        })
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password"
         )
 
-    # 2. Verify password against stored hash
+    # Log failed — wrong password
     if not verify_password(credentials.password, user["password"]):
+        await activity_logs_collection.insert_one({
+            "user_id": user["_id"],
+            "action": "login",
+            "status": "failed",
+            "reason": "wrong_password",
+            "ip_address": ip,
+            "device": request.headers.get("User-Agent", "unknown")[:100],
+            "time": datetime.now(timezone.utc)
+        })
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password"
         )
 
-    # 3. Create JWT tokens
+    # Success
     user_id = str(user["_id"])
     access_token = create_access_token({"sub": user_id})
     refresh_token = create_refresh_token({"sub": user_id})
 
-    # Log this login to activity_logs
-    from app.database.connection import activity_logs_collection
-    from datetime import datetime
-    import httpx
-    # Get IP from request headers
     await activity_logs_collection.insert_one({
         "user_id": user["_id"],
-        "action" : "login",
-        "ip_address": "captured-on-request",
-        "device": "web",
-        "location": "Bangladesh",
+        "action": "login",
         "status": "success",
-        "time": datetime.utcnow()
+        "ip_address": ip,
+        "device": request.headers.get("User-Agent", "unknown")[:100],
+        "time": datetime.now(timezone.utc)
     })
 
-    # 4. Return tokens + user info
     return {
         "access_token": access_token,
         "refresh_token": refresh_token,
@@ -106,82 +110,62 @@ async def login(credentials: UserLogin):
     }
 
 
-# ─── GET CURRENT USER ─────────────────────────────────────
+# ── GET CURRENT USER ───────────────────────────────────────
 @router.get("/me", response_model=UserResponse)
-async def get_me(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    # 1. Get token from request header
+async def get_me(
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
     token = credentials.credentials
-
-    # 2. Verify the token
     payload = verify_token(token)
     if not payload:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token is invalid or expired"
         )
-
-    # 3. Get user from database
     user = await find_user_by_id(payload["sub"])
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
-
     return user_helper(user)
 
 
-# ─── REFRESH TOKEN ────────────────────────────────────────
+# ── REFRESH TOKEN ──────────────────────────────────────────
 @router.post("/refresh")
-async def refresh_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+async def refresh_token(
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
     token = credentials.credentials
-    payload = verify_token(token)
-
-    if not payload or payload.get("type") != "refresh":
+    payload = verify_token(token, expected_type="refresh")
+    if not payload:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid refresh token"
         )
-
-    # Give them a new access token
     new_access_token = create_access_token({"sub": payload["sub"]})
     return {"access_token": new_access_token, "token_type": "bearer"}
 
-    # Change password
-    # ─── CHANGE PASSWORD ──────────────────────────────────────
+
+# ── CHANGE PASSWORD ────────────────────────────────────────
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=8)
+
+
 @router.put("/change-password")
 async def change_password(
     data: ChangePasswordRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    current_user=Depends(get_current_user)
 ):
-    # ১. টোকেন ভেরিফাই করা
-    payload = verify_token(credentials.credentials)
-    if not payload:
+    if not verify_password(data.current_password, current_user["password"]):
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, 
-            detail="Token is invalid or expired"
-        )
-
-    # ২. ইউজার খুঁজে বের করা
-    user = await find_user_by_id(payload["sub"])
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, 
-            detail="User not found"
-        )
-
-    # ৩. বর্তমান পাসওয়ার্ড চেক করা
-    if not pwd_context.verify(data.current_password, user["password"]):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, 
+            status_code=400,
             detail="Current password is incorrect"
         )
-
-    # ৪. নতুন পাসওয়ার্ড হ্যাশ করে ডেটাবেজে সেভ করা
-    new_hashed = pwd_context.hash(data.new_password)
+    new_hashed = hash_password(data.new_password)
     await users_collection.update_one(
-        {"_id": user["_id"]},
+        {"_id": current_user["_id"]},
         {"$set": {"password": new_hashed}}
     )
-    
     return {"message": "Password updated successfully!"}

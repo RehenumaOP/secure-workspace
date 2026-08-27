@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from app.database.connection import users_collection
 from bson import ObjectId
 
@@ -8,7 +8,7 @@ def user_helper(user) -> dict:
         "name": user["name"],
         "email": user["email"],
         "role": user.get("role", "member"),
-        "created_at": user.get("created_at", datetime.utcnow()),
+        "created_at": user.get("created_at", datetime.now(timezone.utc)),
     }
 
 async def find_user_by_email(email: str):
@@ -20,7 +20,7 @@ async def find_user_by_id(user_id: str):
     return user
 
 async def create_user(user_data: dict):
-    user_data["created_at"] = datetime.utcnow()
+    user_data["created_at"] = datetime.now(timezone.utc)
     user_data["role"] = "member"
     result = await users_collection.insert_one(user_data)
     new_user = await users_collection.find_one({"_id": result.inserted_id})

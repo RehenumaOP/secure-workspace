@@ -40,9 +40,10 @@ function WorkspaceDetailPage() {
 
   const fetchData = async () => {
     try {
-      const [wsRes, tasksRes] = await Promise.all([
+      const [wsRes, tasksRes, membersRes] = await Promise.all([
         getWorkspace(id),
-        getTasks(id)
+        getTasks(id),
+        api.get(`/api/workspaces/${id}/members`)
       ])
       setWorkspace(wsRes.data)
       setTasks(tasksRes.data.tasks)
@@ -62,7 +63,7 @@ function WorkspaceDetailPage() {
       await fetchData()
     }
     load()
-  }, [id])
+  }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // <-- Updated handleCreateTask to support file uploads
   const handleCreateTask = async (e) => {
@@ -437,7 +438,7 @@ function WorkspaceDetailPage() {
                   </div>
                   <div>
                     <p className="text-sm font-medium text-gray-800">
-                      {member.user_id === user?.id ? `${user?.name} (You)` : member.user_id.slice(-8)}
+                      {member.user_id === user?.id ? `${user?.name} (You)` : member.name || member.user_id.slice(-8)}
                     </p>
                     <p className="text-xs text-gray-400">
                       Joined {new Date(member.joined_at).toLocaleDateString()}

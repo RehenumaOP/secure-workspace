@@ -1,7 +1,6 @@
 # app/routers/workspace.py
 from fastapi import APIRouter, HTTPException, status, Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from datetime import datetime
+from datetime import datetime, timezone
 from bson import ObjectId
 from app.schemas.workspace import WorkspaceCreate, MemberInvite
 from app.models.workspace import (
@@ -9,31 +8,11 @@ from app.models.workspace import (
     get_workspace_by_id, add_member_to_workspace,
     workspace_helper
 )
-from app.models.user import find_user_by_email, find_user_by_id
-from app.auth.jwt_handler import verify_token
-from app.database.connection import workspaces_collection
+from app.models.user import find_user_by_email
+from app.database.connection import workspaces_collection, users_collection
+from app.auth.dependencies import get_current_user
 
 router = APIRouter(prefix="/api/workspaces", tags=["Workspaces"])
-security = HTTPBearer()
-
-
-async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security)
-):
-    token = credentials.credentials
-    payload = verify_token(token)
-    if not payload:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token"
-        )
-    user = await find_user_by_id(payload["sub"])
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
-    return user
 
 
 # ── CREATE WORKSPACE ──────────────────────────────────────
@@ -53,10 +32,10 @@ async def create_new_workspace(
                 "user_id": user_id,
                 "role": "admin",
                 "status": "active",
-                "joined_at": datetime.utcnow()
+                "joined_at": datetime.now(timezone.utc)
             }
         ],
-        "created_at": datetime.utcnow()
+        "created_at": datetime.now(timezone.utc)
     }
 
     new_ws = await create_workspace(workspace_data)
@@ -77,11 +56,9 @@ async def get_my_workspaces(current_user=Depends(get_current_user)):
     }
 
 
-# ── GET PENDING INVITES for current user ──────────────────
-# NOTE: this MUST be declared before "/{workspace_id}" below.
-# FastAPI matches routes top-to-bottom, and "/{workspace_id}" is a
-# wildcard that would otherwise swallow "/my-invites" as if
-# workspace_id == "my-invites", causing an ObjectId crash.
+# ── GET MY PENDING INVITES ────────────────────────────────
+# IMPORTANT: this route must come BEFORE /{workspace_id}
+# otherwise FastAPI treats "my-invites" as a workspace_id
 @router.get("/my-invites")
 async def get_my_invites(current_user=Depends(get_current_user)):
     user_id = current_user["_id"]
@@ -130,7 +107,44 @@ async def get_workspace(
     return workspace_helper(ws)
 
 
-# ── INVITE MEMBER (pending until accepted) ────────────────
+# ── GET MEMBERS WITH REAL NAMES ───────────────────────────
+@router.get("/{workspace_id}/members")
+async def get_workspace_members(
+    workspace_id: str,
+    current_user=Depends(get_current_user)
+):
+    ws = await get_workspace_by_id(workspace_id)
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    # Check caller is a member
+    user_id = current_user["_id"]
+    member_ids = [m["user_id"] for m in ws.get("members", [])]
+    if user_id not in member_ids:
+        raise HTTPException(
+            status_code=403,
+            detail="You are not a member of this workspace"
+        )
+
+    # Enrich each member with name + email from users collection
+    enriched = []
+    for m in ws.get("members", []):
+        user_doc = await users_collection.find_one({"_id": m["user_id"]})
+        enriched.append({
+            "user_id": str(m["user_id"]),
+            "name": user_doc["name"] if user_doc else "Unknown",
+            "email": user_doc["email"] if user_doc else "",
+            "role": m.get("role", "member"),
+            "status": m.get("status", "active"),
+            "joined_at": m.get(
+                "joined_at", datetime.now(timezone.utc)
+            ).isoformat()
+        })
+
+    return {"members": enriched}
+
+
+# ── INVITE MEMBER (pending) ───────────────────────────────
 @router.post("/{workspace_id}/invite")
 async def invite_member(
     workspace_id: str,
@@ -142,35 +156,41 @@ async def invite_member(
         raise HTTPException(status_code=404, detail="Workspace not found")
 
     # Only admin can invite
+    user_id = current_user["_id"]
     user_role = None
-    for m in ws.get("members", []):
-        if str(m["user_id"]) == str(current_user["_id"]):
-            user_role = m["role"]
+    for member in ws.get("members", []):
+        if member["user_id"] == user_id:
+            user_role = member["role"]
             break
-    if user_role != "admin":
-        raise HTTPException(status_code=403, detail="Only admins can invite members")
 
-    # Find invited user
+    if user_role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admins can invite members"
+        )
+
     invited_user = await find_user_by_email(invite_data.email)
     if not invited_user:
-        raise HTTPException(status_code=404, detail="No account found with that email")
+        raise HTTPException(
+            status_code=404,
+            detail="No account found with that email"
+        )
 
     invited_id = invited_user["_id"]
 
     # Check not already a member or pending
-    # NOTE: renamed local var from `status` to `member_status` —
-    # `status` is already imported from fastapi at the top of this
-    # file (used for status.HTTP_404_NOT_FOUND etc). Reassigning a
-    # local variable with the same name would shadow that import
-    # for the rest of this function.
     for m in ws.get("members", []):
         if str(m["user_id"]) == str(invited_id):
-            member_status = m.get("status", "active")
-            if member_status == "pending":
-                raise HTTPException(status_code=400, detail="Invite already sent — awaiting acceptance")
-            raise HTTPException(status_code=400, detail="User is already a member")
+            if m.get("status") == "pending":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invite already sent — awaiting acceptance"
+                )
+            raise HTTPException(
+                status_code=400,
+                detail="User is already a member"
+            )
 
-    # Add with status=pending — NOT active yet
     await workspaces_collection.update_one(
         {"_id": ObjectId(workspace_id)},
         {"$push": {
@@ -178,7 +198,7 @@ async def invite_member(
                 "user_id": invited_id,
                 "role": invite_data.role,
                 "status": "pending",
-                "joined_at": datetime.utcnow()
+                "joined_at": datetime.now(timezone.utc)
             }
         }}
     )
@@ -207,7 +227,10 @@ async def accept_invite(
             break
 
     if not found:
-        raise HTTPException(status_code=404, detail="No pending invite found for you")
+        raise HTTPException(
+            status_code=404,
+            detail="No pending invite found for you"
+        )
 
     await workspaces_collection.update_one(
         {
@@ -217,3 +240,59 @@ async def accept_invite(
         {"$set": {"members.$.status": "active"}}
     )
     return {"message": "You have joined the workspace!"}
+
+
+# ── REMOVE MEMBER ─────────────────────────────────────────
+@router.delete("/{workspace_id}/members/{user_id}")
+async def remove_member(
+    workspace_id: str,
+    user_id: str,
+    current_user=Depends(get_current_user)
+):
+    ws = await get_workspace_by_id(workspace_id)
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    current_role = None
+    for m in ws.get("members", []):
+        if str(m["user_id"]) == str(current_user["_id"]):
+            current_role = m["role"]
+            break
+
+    if current_role != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Only admins can remove members"
+        )
+
+    if str(ws["owner_id"]) == user_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot remove the workspace owner"
+        )
+
+    await workspaces_collection.update_one(
+        {"_id": ObjectId(workspace_id)},
+        {"$pull": {"members": {"user_id": ObjectId(user_id)}}}
+    )
+    return {"message": "Member removed successfully!"}
+
+
+# ── DELETE WORKSPACE ──────────────────────────────────────
+@router.delete("/{workspace_id}")
+async def delete_workspace(
+    workspace_id: str,
+    current_user=Depends(get_current_user)
+):
+    ws = await get_workspace_by_id(workspace_id)
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    if str(ws["owner_id"]) != str(current_user["_id"]):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the workspace owner can delete it"
+        )
+
+    await workspaces_collection.delete_one({"_id": ObjectId(workspace_id)})
+    return {"message": "Workspace deleted successfully!"}
